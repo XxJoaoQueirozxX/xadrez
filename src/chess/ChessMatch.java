@@ -19,6 +19,7 @@ public class ChessMatch {
     private Color currentPlayer;
     private boolean check;
     private boolean checkMate;
+    private boolean stalemate;
     private ChessPiece enPassantVulnerable;
     private ChessPiece promoted;
     private Board board;
@@ -31,6 +32,11 @@ public class ChessMatch {
         board = new Board(8, 8);
         turn = 1;
         currentPlayer = Color.WHITE;
+        check = false;
+        checkMate = false;
+        stalemate = false;
+        enPassantVulnerable = null;
+        promoted = null;
         initialSetup();
     }
 
@@ -58,6 +64,10 @@ public class ChessMatch {
 
     public boolean getCheckMate() {
         return checkMate;
+    }
+
+    public boolean getStalemate() {
+        return stalemate;
     }
 
     public ChessPiece getEnPassantVulnerable() {
@@ -239,9 +249,13 @@ public class ChessMatch {
 
         check = testCheck(opponent(currentPlayer));
 
+        // reset stalemate flag each move
+        stalemate = false;
 
         if (testCheckMate(opponent(currentPlayer))) {
             checkMate = true;
+        } else if (testStalemate(opponent(currentPlayer))) {
+            stalemate = true;
         } else {
             nextTurn();
         }
@@ -255,6 +269,22 @@ public class ChessMatch {
         }
 
         return (ChessPiece)capturedPiece;
+    }
+
+    // Helper for AI: check if a move is legal (does not leave current player in check)
+    public boolean isLegalMove(ChessPosition sourcePosition, ChessPosition targetPosition) {
+        Position source = sourcePosition.toPosition();
+        Position target = targetPosition.toPosition();
+        try {
+            validateSourcePosition(source);
+            validateTargetPosition(source, target);
+        } catch (BoardException e) {
+            return false;
+        }
+        Piece capturedPiece = makeMove(source, target);
+        boolean selfInCheck = testCheck(currentPlayer);
+        undoMove(source, target, capturedPiece);
+        return !selfInCheck;
     }
 
 
@@ -327,6 +357,38 @@ public class ChessMatch {
                 }
             }
         }
+        return true;
+    }
+
+    // Returns true if the given color is stalemated (no legal moves and not in check)
+    public boolean testStalemate(Color color) {
+        // If the player is in check, it's not stalemate
+        if (testCheck(color)) {
+            return false;
+        }
+
+        // Iterate all pieces of the given color and see if any legal move exists
+        List<Piece> pieces = piecesOnTheBoard.stream().filter(x -> ((ChessPiece) x).getColor() == color).collect(Collectors.toList());
+        for (Piece p : pieces) {
+            boolean[][] mat = p.possibleMoves();
+            for (int i = 0; i < board.getRows(); i++) {
+                for (int j = 0; j < board.getColumns(); j++) {
+                    if (mat[i][j]) {
+                        Position source = ((ChessPiece) p).getChessPosition().toPosition();
+                        Position target = new Position(i, j);
+                        Piece capturedPiece = makeMove(source, target);
+                        boolean leavesInCheck = testCheck(color);
+                        undoMove(source, target, capturedPiece);
+                        if (!leavesInCheck) {
+                            // Found a legal move
+                            return false;
+                        }
+                    }
+                }
+            }
+        }
+
+        // No legal moves and not in check: stalemate
         return true;
     }
 
