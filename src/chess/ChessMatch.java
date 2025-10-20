@@ -78,6 +78,104 @@ public class ChessMatch {
         return promoted;
     }
 
+    // Generate a FEN string for the current position (simplified: halfmove clock = 0)
+    public String getFEN() {
+        StringBuilder sb = new StringBuilder();
+
+        // 1) Piece placement
+        ChessPiece[][] pieces = getPieces();
+        for (int row = 0; row < 8; row++) {
+            int empty = 0;
+            for (int col = 0; col < 8; col++) {
+                ChessPiece p = pieces[row][col];
+                if (p == null) {
+                    empty++;
+                } else {
+                    if (empty > 0) {
+                        sb.append(empty);
+                        empty = 0;
+                    }
+                    sb.append(toFenChar(p));
+                }
+            }
+            if (empty > 0) sb.append(empty);
+            if (row < 7) sb.append('/');
+        }
+
+        // 2) Active color
+        sb.append(' ');
+        sb.append(currentPlayer == Color.WHITE ? 'w' : 'b');
+
+        // 3) Castling availability
+        sb.append(' ');
+        String castling = getCastlingRights(pieces);
+        sb.append(castling.isEmpty() ? "-" : castling);
+
+        // 4) En passant target square
+        sb.append(' ');
+        sb.append(getEnPassantSquare());
+
+        // 5) Halfmove clock (not tracked) and 6) Fullmove number (use turn)
+        sb.append(' ').append(0);
+        sb.append(' ').append(getTurn());
+
+        return sb.toString();
+    }
+
+    private String getEnPassantSquare() {
+        if (enPassantVulnerable == null) return "-";
+        if (!(enPassantVulnerable instanceof Pawn)) return "-";
+        Position pos = enPassantVulnerable.getChessPosition().toPosition();
+        int targetRow = (enPassantVulnerable.getColor() == Color.WHITE) ? pos.getRow() + 1 : pos.getRow() - 1;
+        int col = pos.getColumn();
+        if (targetRow < 0 || targetRow > 7) return "-";
+        char file = (char) ('a' + col);
+        int rank = 8 - targetRow;
+        return "" + file + rank;
+    }
+
+    private String getCastlingRights(ChessPiece[][] pieces) {
+        StringBuilder c = new StringBuilder();
+        // White: king on e1 (row7,col4), rooks on h1 (7,7) and a1 (7,0)
+        ChessPiece wK = pieces[7][4];
+        if (wK instanceof King && wK.getColor() == Color.WHITE && wK.getMoveCount() == 0) {
+            ChessPiece rH1 = pieces[7][7];
+            if (rH1 instanceof chess.pieces.Rook && rH1.getColor() == Color.WHITE && rH1.getMoveCount() == 0) {
+                c.append('K');
+            }
+            ChessPiece rA1 = pieces[7][0];
+            if (rA1 instanceof chess.pieces.Rook && rA1.getColor() == Color.WHITE && rA1.getMoveCount() == 0) {
+                c.append('Q');
+            }
+        }
+        // Black: king on e8 (row0,col4)
+        ChessPiece bK = pieces[0][4];
+        if (bK instanceof King && bK.getColor() == Color.BLACK && bK.getMoveCount() == 0) {
+            ChessPiece rH8 = pieces[0][7];
+            if (rH8 instanceof chess.pieces.Rook && rH8.getColor() == Color.BLACK && rH8.getMoveCount() == 0) {
+                c.append('k');
+            }
+            ChessPiece rA8 = pieces[0][0];
+            if (rA8 instanceof chess.pieces.Rook && rA8.getColor() == Color.BLACK && rA8.getMoveCount() == 0) {
+                c.append('q');
+            }
+        }
+        return c.toString();
+    }
+
+    private char toFenChar(ChessPiece p) {
+        char ch;
+        if (p instanceof Pawn) ch = 'p';
+        else if (p instanceof Knight) ch = 'n';
+        else if (p instanceof Bishop) ch = 'b';
+        else if (p instanceof Rook) ch = 'r';
+        else if (p instanceof Queen) ch = 'q';
+        else if (p instanceof King) ch = 'k';
+        else ch = '?';
+        if (p.getColor() == Color.WHITE) ch = Character.toUpperCase(ch);
+        return ch;
+    }
+
     public void validateSourcePosition(Position source) {
         if (!board.thereIsAPiece(source)) {
             throw new ChessException("There is no piece on source position.");
