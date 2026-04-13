@@ -28,12 +28,18 @@ public class SwingUI extends JFrame {
     private JPanel capturedPanel;
     private JPanel whiteCapturedPanel;
     private JPanel blackCapturedPanel;
+    private boolean gameOverDialogShown = false;
 
     // AI related fields
     private boolean aiModeEnabled = false;
     private ChessAI chessAI;
     private boolean aiIsThinking = false;
     private JCheckBoxMenuItem aiModeMenuItem;
+
+    // Engine selection
+    private boolean useStockfish = false; // if true, use Stockfish instead of built-in AI
+    private chess.StockfishEngine stockfishEngine = new chess.StockfishEngine();
+    private String stockfishPath = "stockfish.exe"; // default attempt in working dir
 
     public SwingUI() {
         chessMatch = new ChessMatch();
@@ -190,9 +196,20 @@ public class SwingUI extends JFrame {
                             }
 
                             possibleMoves = chessMatch.possibleMoves(sourcePosition);
+                            possibleMoves = filterLegalMoves(sourcePosition, possibleMoves);
                         } else {
-                            // Second click - move piece
+                            // Second click - either move piece or cancel selection if clicked same square
                             targetPosition = new ChessPosition(column, chessBoardRow);
+
+                            // If user clicked the same square, cancel selection and re-enable movable pieces
+                            String clicked = String.valueOf(column) + chessBoardRow;
+                            if (clicked.equals(sourcePosition.toString())) {
+                                sourcePosition = null;
+                                possibleMoves = new boolean[8][8];
+                                updateMovablePieces();
+                                repaint();
+                                return;
+                            }
 
                             ChessPiece capturedPiece = chessMatch.performeChessMove(sourcePosition, targetPosition);
                             if (capturedPiece != null) {
@@ -232,6 +249,7 @@ public class SwingUI extends JFrame {
 
                             // Update status and refresh movable pieces for the new turn
                             updateStatus();
+                            showGameOverDialogIfNeeded();
                             updateMovablePieces();
 
                             // If AI mode is enabled and it's black's turn, make AI move
@@ -362,6 +380,27 @@ public class SwingUI extends JFrame {
             return symbol;
         }
 
+        private boolean[][] filterLegalMoves(ChessPosition source, boolean[][] rawMoves) {
+            boolean[][] filtered = new boolean[8][8];
+            for (int r = 0; r < 8; r++) {
+                for (int c = 0; c < 8; c++) {
+                    if (rawMoves[r][c]) {
+                        char targetFile = (char) ('a' + c);
+                        int targetRank = 8 - r;
+                        ChessPosition target = new ChessPosition(targetFile, targetRank);
+                        try {
+                            if (chessMatch.isLegalMove(source, target)) {
+                                filtered[r][c] = true;
+                            }
+                        } catch (Exception ex) {
+                            // ignore illegal move
+                        }
+                    }
+                }
+            }
+            return filtered;
+        }
+
         /**
          * Updates the movablePieces array to highlight all pieces that can move for the current player
          */
@@ -389,8 +428,9 @@ public class SwingUI extends JFrame {
                         ChessPosition position = new ChessPosition(column, chessBoardRow);
 
                         try {
-                            // Check if the piece has any possible moves
+                            // Check if the piece has any possible moves (legal)
                             boolean[][] pieceMoves = chessMatch.possibleMoves(position);
+                            pieceMoves = filterLegalMoves(position, pieceMoves);
                             boolean hasMoves = false;
 
                             // Check if there's at least one possible move
@@ -500,6 +540,24 @@ public class SwingUI extends JFrame {
         blackCapturedPanel.repaint();
     }
 
+    private void showGameOverDialogIfNeeded() {
+        if (gameOverDialogShown) return;
+        if (chessMatch.getCheckMate()) {
+            String winner = (chessMatch.getCurrentPlayer() == chess.Color.WHITE) ? "WHITE" : "BLACK";
+            JOptionPane.showMessageDialog(this,
+                    "Checkmate! Winner: " + winner,
+                    "Game Over",
+                    JOptionPane.INFORMATION_MESSAGE);
+            gameOverDialogShown = true;
+        } else if (chessMatch.getStalemate()) {
+            JOptionPane.showMessageDialog(this,
+                    "Draw by stalemate",
+                    "Game Over",
+                    JOptionPane.INFORMATION_MESSAGE);
+            gameOverDialogShown = true;
+        }
+    }
+
     /**
      * Creates the menu bar with game options
      */
@@ -516,8 +574,10 @@ public class SwingUI extends JFrame {
             chessMatch = new ChessMatch();
             capturedPieces.clear();
             sourcePosition = null;
+            gameOverDialogShown = false;
             updateStatus();
             updateCapturedPiecesDisplay();
+            boardPanel.updateMovablePieces();
             boardPanel.repaint();
         });
 
@@ -532,6 +592,54 @@ public class SwingUI extends JFrame {
             }
         });
 
+        // Engine selection submenu
+        JMenu engineMenu = new JMenu("Computer Engine");
+        ButtonGroup engineGroup = new ButtonGroup();
+        JRadioButtonMenuItem builtInEngineItem = new JRadioButtonMenuItem("Built-in (Simple)", true);
+        JRadioButtonMenuItem stockfishEngineItem = new JRadioButtonMenuItem("Stockfish (UCI)");
+        engineGroup.add(builtInEngineItem);
+        engineGroup.add(stockfishEngineItem);
+        engineMenu.add(builtInEngineItem);
+        engineMenu.add(stockfishEngineItem);
+        engineMenu.addSeparator();
+        JMenuItem setPathItem = new JMenuItem("Set Stockfish Path...");
+        engineMenu.add(setPathItem);
+
+        builtInEngineItem.addActionListener(e -> {
+            useStockfish = false;
+        });
+        stockfishEngineItem.addActionListener(e -> {
+            useStockfish = true;
+            // Try to start the engine if path is set
+            stockfishEngine.setEnginePath(stockfishPath);
+            if (!stockfishEngine.start()) {
+                JOptionPane.showMessageDialog(SwingUI.this,
+                        "Failed to start Stockfish at: " + stockfishPath + "\nPlease set the correct path.",
+                        "Stockfish Error",
+                        JOptionPane.ERROR_MESSAGE);
+            }
+        });
+        setPathItem.addActionListener(e -> {
+            JFileChooser chooser = new JFileChooser();
+            chooser.setDialogTitle("Select stockfish executable");
+            chooser.setFileSelectionMode(JFileChooser.FILES_ONLY);
+            int result = chooser.showOpenDialog(SwingUI.this);
+            if (result == JFileChooser.APPROVE_OPTION) {
+                stockfishPath = chooser.getSelectedFile().getAbsolutePath();
+                stockfishEngine.setEnginePath(stockfishPath);
+                if (useStockfish) {
+                    if (stockfishEngine.start()) {
+                        JOptionPane.showMessageDialog(SwingUI.this, "Stockfish started successfully.");
+                    } else {
+                        JOptionPane.showMessageDialog(SwingUI.this,
+                                "Could not start Stockfish. Check the file and try again.",
+                                "Stockfish Error",
+                                JOptionPane.ERROR_MESSAGE);
+                    }
+                }
+            }
+        });
+
         // Exit option
         JMenuItem exitItem = new JMenuItem("Exit");
         exitItem.addActionListener(e -> System.exit(0));
@@ -539,6 +647,7 @@ public class SwingUI extends JFrame {
         // Add items to game menu
         gameMenu.add(newGameItem);
         gameMenu.add(aiModeMenuItem);
+        gameMenu.add(engineMenu);
         gameMenu.addSeparator();
         gameMenu.add(exitItem);
 
@@ -547,6 +656,23 @@ public class SwingUI extends JFrame {
 
         // Set the menu bar
         setJMenuBar(menuBar);
+    }
+
+    /**
+     * Apply the chosen AI move to the game, handling captures and promotions.
+     */
+    private void applyAIMove(ChessPosition[] move) {
+        if (move == null) return;
+        ChessPosition source = move[0];
+        ChessPosition target = move[1];
+        ChessPiece capturedPiece = chessMatch.performeChessMove(source, target);
+        if (capturedPiece != null) {
+            capturedPieces.add(capturedPiece);
+        }
+        if (chessMatch.getPromoted() != null) {
+            // Prefer queen promotion automatically for AI
+            chessMatch.replacePromotedPiece("Q");
+        }
     }
 
     /**
@@ -569,24 +695,22 @@ public class SwingUI extends JFrame {
                     // Add a small delay to make the AI seem like it's "thinking"
                     Thread.sleep(500);
 
-                    // Get AI move
-                    ChessPosition[] move = chessAI.selectMove(chessMatch);
-
-                    if (move != null) {
-                        ChessPosition source = move[0];
-                        ChessPosition target = move[1];
-
-                        // Perform the move
-                        ChessPiece capturedPiece = chessMatch.performeChessMove(source, target);
-
-                        if (capturedPiece != null) {
-                            capturedPieces.add(capturedPiece);
+                    if (useStockfish) {
+                        // Ensure engine is started
+                        stockfishEngine.setEnginePath(stockfishPath);
+                        if (!stockfishEngine.start()) {
+                            // Fall back to built-in AI if engine fails
+                            ChessPosition[] move = chessAI.selectMove(chessMatch);
+                            applyAIMove(move);
+                        } else {
+                            String fen = chessMatch.getFEN();
+                            String uci = stockfishEngine.getBestMoveUci(fen, 700);
+                            ChessPosition[] move = chess.StockfishEngine.parseUciMove(uci);
+                            applyAIMove(move);
                         }
-
-                        // Handle promotion (AI always chooses Queen)
-                        if (chessMatch.getPromoted() != null) {
-                            chessMatch.replacePromotedPiece("Q");
-                        }
+                    } else {
+                        ChessPosition[] move = chessAI.selectMove(chessMatch);
+                        applyAIMove(move);
                     }
                 } catch (Exception e) {
                     e.printStackTrace();
@@ -599,6 +723,7 @@ public class SwingUI extends JFrame {
                 // Update UI after AI move
                 aiIsThinking = false;
                 updateStatus();
+                showGameOverDialogIfNeeded();
                 updateCapturedPiecesDisplay();
                 boardPanel.updateMovablePieces();
                 boardPanel.repaint();
